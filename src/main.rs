@@ -173,10 +173,15 @@ struct SkierPath {
 
 impl Drop for SkierPath {
     fn drop(&mut self) {
-        let mut swapped: Option<Rc<SkierPath>>;
         while self.prev.is_some() {
-            swapped = None;
-            std::mem::swap(&mut temp, &mut swapped.as_ref().unwrap().prev);
+            let prev: Rc::<SkierPath> = Rc::clone(&self.prev.as_ref().unwrap());
+            if prev.prev.is_some() {
+                let mut prev_prev = Some(Rc::clone(&prev.prev.as_ref().unwrap()));
+                std::mem::swap(&mut self.prev, &mut prev_prev);
+            }
+            else {
+                break;
+            }
         }
     }
 }
