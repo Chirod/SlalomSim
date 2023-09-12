@@ -61,15 +61,27 @@ impl CourseLineSeg {
 			end: (self.1.downcourse as f64, self.1.sidecourse as f64).into(),
 		});
 
-		let line = LineInterval::line(Line {
+		let line = LineInterval::line_segment(Line {
 			start: (other.0.downcourse as f64, other.0.sidecourse as f64).into(),
 			end: (other.1.downcourse as f64, other.1.sidecourse as f64).into(),
 		});
 
 		let intersection = segment.relate(&line).unique_intersection();
-		intersection.is_some()
+        // let intersection2 = line.relate(&segment).unique_intersection();
+        intersection.is_some() 
     }
+
+    
 }
+
+#[test]
+fn test_intersects() {
+    let a = CourseLineSeg(CoursePoint { downcourse: -7825, sidecourse: 0 }, CoursePoint { downcourse: -7815, sidecourse: 0 });
+    let b = CourseLineSeg(CoursePoint { downcourse: 0, sidecourse: 125 }, CoursePoint { downcourse: 0, sidecourse: -125 });
+    assert!(!a.intersects(&b));
+}
+
+
 impl Add for CoursePoint {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
@@ -171,9 +183,9 @@ impl SkierAgent {
 		self.inc_mutate_index(self.call_count);
 	}
     fn get_next_acceleration(&mut self) -> (i32, i32) {
-        let (left, right) = self.moves[self.call_count];
+        let (left, right) = self.moves.get(self.call_count).unwrap_or(&(0,0));
 		self.call_count += 1;
-		(left as i32, right as i32)
+		(*left as i32, *right as i32)
     }
 	fn mutate_index(&mut self, index: usize) {
 		let mut rng = rand::thread_rng();
@@ -318,12 +330,6 @@ fn score_skier_agent(skier_agent: &mut SkierAgent, course: &mut SlalomCourse) ->
 			let boat_loc = CoursePoint::create(boat_location, 0);
 			let distance: f64 = current.distance_from(&boat_loc);
 			let fudge: f64 = distance - f64::from(rope_length);
-			if revision_attempts  == 0 {
-				println!("{distance}, {rope_length}, {fudge}");
-			}
-			else {
-				println!("attempting: accel:{accel:?}, prev:{previous:?}, cur:{current:?}, boat:{boat_location:?}, d:{distance}, rope:{rope_length}, fudge{fudge}");
-			}
 			if fudge.abs() > skier_reach {
 				skier_agent.revise_prev_accel();
 				revision_attempts += 1;
@@ -341,17 +347,9 @@ fn score_skier_agent(skier_agent: &mut SkierAgent, course: &mut SlalomCourse) ->
 			if boat_location > 2700 {
 				break;
 			}
-			if(segment.0.downcourse < 0 && segment.1.downcourse > 0) {
-				println!("HAH, {segment:?} {:?}", course.entry_gate);
-			}
             if course.entry_gate.intersects(&segment) {
                 entry_gates = true;
-				println!("got_there");
             }
-			if(segment.0.downcourse < 0 && segment.1.downcourse > 0) {
-				println!("Oh!");
-				break;
-			}
         }
         if !exit_gates {
             if course.exit_gate.intersects(&segment) {
@@ -456,20 +454,24 @@ fn select(current_population: Vec<Box<SkierAgent>>, limit: usize) -> Vec<Box<Ski
 	}).take(limit).collect()
 }
 
-fn select_and_improve() {
-	let population = vec![SkierAgent::default()];
-	// breed(population, 500);
+fn select_and_improve(population: &mut Vec<Box<SkierAgent>>) {
+	for _ in 0..5 {
+	    breed(population, 500);
+        let mut temp = Default::default();
+        std::mem::swap(&mut temp, population);
+        temp = select(temp, 250);
+        std::mem::swap(&mut temp, population);
+    }
 }
 
 
 fn main() {
     let mut viewscreen = ViewScreen::create();
     let mut course = SlalomCourse::create();
-	let mut agent = SkierAgent::default();
-	for _ in 0..500 {
-		agent.mutate();
-	}
-    let (score, skier) = score_skier_agent(&mut agent, &mut course);
+	let agent = SkierAgent::default();
+	let mut population = vec![Box::new(agent)];
+    select_and_improve(&mut population);
+    let (score, skier) = score_skier_agent(population.first_mut().unwrap(), &mut course);
     println!("score: {score:?}");
 	while viewscreen.is_open() {
 		sleep(Duration::from_millis(200));
