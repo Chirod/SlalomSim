@@ -3,6 +3,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use minifb::{Window, WindowOptions};
 use rand::Rng;
+use rand::seq::SliceRandom;
 use raqote::{DrawTarget, SolidSource, Source, DrawOptions, PathBuilder};
 
 #[derive(Debug)]
@@ -19,6 +20,7 @@ struct BuoySegs {
     quarter_mark: CourseLineSeg,
     half_mark: CourseLineSeg,
     full_mark: CourseLineSeg,
+	death_line: CourseLineSeg,
 }
 struct SlalomCourse {
     entry_gate: CourseLineSeg,
@@ -32,25 +34,29 @@ impl BuoySegs {
         let half_mark: CourseLineSeg = CourseLineSeg(buoy_location, buoy_location + CoursePoint::create(4100, 0));
         let buoy_downcourse = buoy_location.downcourse;
         let full_mark: CourseLineSeg;
+		let death_line: CourseLineSeg;
         if buoy_location.sidecourse > 0 {
             quarter_mark = CourseLineSeg(buoy_location, buoy_location + CoursePoint::create(0, 1000));
             full_mark = CourseLineSeg(CoursePoint::create(buoy_downcourse, 115), CoursePoint::create(buoy_downcourse + 4100, 115));
+			death_line = CourseLineSeg(CoursePoint::create(buoy_downcourse, 115), CoursePoint::create(buoy_downcourse - 5, -8000));
         }
         else {
             quarter_mark = CourseLineSeg(buoy_location, buoy_location + CoursePoint::create(0, -1000));
             full_mark = CourseLineSeg(CoursePoint::create(buoy_downcourse, -115), CoursePoint::create(buoy_downcourse + 4100, -115));
+			death_line = CourseLineSeg(CoursePoint::create(buoy_downcourse, -115), CoursePoint::create(buoy_downcourse - 5, 8000));
         }
         Self {
             loc: buoy_location,
             quarter_mark,
             half_mark,
-            full_mark
+            full_mark,
+			death_line
         }
     }
 }
 
 impl CourseLineSeg {
-    fn intersects(&self, other: &Self) -> bool {
+    fn intersection(&self, other: &Self) -> Option<geo::Point<f64>> {
         // Self::intersect(self.0, other.0, self.1, other.1)
 
 		use line_intersection::LineInterval;
@@ -68,10 +74,13 @@ impl CourseLineSeg {
 
 		let intersection = segment.relate(&line).unique_intersection();
         // let intersection2 = line.relate(&segment).unique_intersection();
-        intersection.is_some() 
+        intersection
     }
 
-    
+	fn intersects(&self, other: &Self) -> bool {
+		self.intersection(other).is_some()
+	}
+
 }
 
 #[test]
@@ -170,43 +179,80 @@ impl Skier {
     }
 }
 
+trait SkierAgent {
+	fn get_next_acceleration(&mut self) -> (i32, i32);
+	fn revise_prev_accel(&mut self);
+	fn duplicate(&self) -> Box<dyn SkierAgent>;
+	fn mutate(&mut self);
+	fn dump(&mut self);
+}
+
 #[derive(Clone)]
-struct SkierAgent {
+struct GeneticSkierAgent {
 	call_count: usize,
     moves: [(i8, i8); 4000],
 }
 
-impl SkierAgent {
-	const MAX_ACCEL:i8 = 3;
-	fn revise_prev_accel(&mut self) {
-		self.call_count -= 1;
-		self.inc_mutate_index(self.call_count);
-	}
-    fn get_next_acceleration(&mut self) -> (i32, i32) {
+impl SkierAgent for GeneticSkierAgent {
+	fn get_next_acceleration(&mut self) -> (i32, i32) {
         let (left, right) = self.moves.get(self.call_count).unwrap_or(&(0,0));
 		self.call_count += 1;
 		(*left as i32, *right as i32)
     }
+	fn revise_prev_accel(&mut self) {
+		self.call_count -= 1;
+		self.inc_mutate_index(self.call_count);
+	}
+	fn duplicate(&self) -> Box<dyn SkierAgent> {
+		Box::new(self.clone())
+	}
+
+	fn mutate(&mut self)  {
+		self.mutate_index(rand::thread_rng().gen::<usize>() % 4000)
+	}
+	fn dump(&mut self) {
+		for x in 0..self.moves.len() {
+			let a = self.moves[x].0;
+			let b = self.moves[x].1;
+			if a != 0 || b != 0 {
+				println!("({x}, {a}, {b}),");
+			}
+		}
+		println!("{}", self.call_count);
+	}
+}
+
+impl GeneticSkierAgent {
+	const MAX_ACCEL:i8 = 3;
+	fn craft(accelerations: Vec<(usize, i8, i8)>) -> Self {
+		let mut ret = Self::default();
+		for (index, a, b) in accelerations {
+			if let Some(accel) = ret.moves.get_mut(index) {
+				*accel = (a,b);
+			}
+		}
+		ret
+	}
 	fn mutate_index(&mut self, index: usize) {
 		let mut rng = rand::thread_rng();
 		self.moves[index] = (rng.gen::<i8>() % Self::MAX_ACCEL, rng.gen::<i8>() % Self::MAX_ACCEL);
 	}
 	fn inc_mutate_index(&mut self, index: usize) {
-		self.moves[index].0 += 1;
-		if self.moves[index].0 > Self::MAX_ACCEL {
-			self.moves[index].0 = -Self::MAX_ACCEL;
-			self.moves[index].1 += 1;
-			if self.moves[index].1 > Self::MAX_ACCEL {
-				self.moves[index].1 = -Self::MAX_ACCEL;
+		if let Some((a,b)) = self.moves.get_mut(index) {
+			*a += 1;
+			if *a > Self::MAX_ACCEL {
+				*a = -Self::MAX_ACCEL;
+				*b += 1;
+				if *b > Self::MAX_ACCEL {
+					*b = -Self::MAX_ACCEL;
+				}
 			}
 		}
 	}
-	fn mutate(&mut self)  {
-		self.mutate_index(rand::thread_rng().gen::<usize>() % 4000)
-	}
+
 }
 
-impl Default for SkierAgent {
+impl Default for GeneticSkierAgent {
     fn default() -> Self {
         Self { call_count:0, moves: [(0,0); 4000] }
     }
@@ -271,30 +317,26 @@ impl ViewScreen {
         let path = pb.finish();
         self.dt.fill(&path, &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 0xff, 0, 0)), &DrawOptions::new());
     }
-    fn draw_boat(&mut self, boat_loc: i32) {
-        let mut pb = PathBuilder::new();
-        let (side, down) = Self::convert_course_point(CoursePoint::create(boat_loc, 0));
-        pb.arc(side, down, 4.0, 0., 2. * 3.14159);
-        let path = pb.finish();
-        self.dt.fill(&path, &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 0, 0xff, 0)), &DrawOptions::new());
-    }
-	fn draw_segment(&mut self, segment: &CourseLineSeg) {
-		let mut pb = PathBuilder::new();
-		let (px, py) = Self::convert_course_point(segment.0);
-		let (qx, qy) = Self::convert_course_point(segment.1);
-		let length = qx - px;
-		pb.rect(px, py, length, 1.0);
-		let path = pb.finish();
-		self.dt.fill(&path, &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 0, 0xff, 0)), &DrawOptions::new());
-	}
+    // fn draw_boat(&mut self, boat_loc: i32) {
+    //     let mut pb = PathBuilder::new();
+    //     let (side, down) = Self::convert_course_point(CoursePoint::create(boat_loc, 0));
+    //     pb.arc(side, down, 4.0, 0., 2. * 3.14159);
+    //     let path = pb.finish();
+    //     self.dt.fill(&path, &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 0, 0xff, 0)), &DrawOptions::new());
+    // }
+	// fn draw_segment(&mut self, segment: &CourseLineSeg) {
+	// 	let mut pb = PathBuilder::new();
+	// 	let (px, py) = Self::convert_course_point(segment.0);
+	// 	let (qx, qy) = Self::convert_course_point(segment.1);
+	// 	let length = qx - px;
+	// 	pb.rect(px, py, length, 1.0);
+	// 	let path = pb.finish();
+	// 	self.dt.fill(&path, &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 0, 0xff, 0)), &DrawOptions::new());
+	// }
 	fn draw_skier(&mut self, skier_location: &SkierPath) {
-	    let mut last_point = CoursePoint { downcourse: 0, sidecourse: 0 };
-		let mut last_converted = (0.0, 0.0);
 		for x in skier_location.points.iter() {
 			let mut pb = PathBuilder::new();
 			let (side, down) = Self::convert_course_point(*x);
-			last_point = *x;
-			last_converted = (side, down);
             pb.arc(side, down, 0.75, 0., 2. * 3.14159);
 			let path = pb.finish();
 			self.dt.fill(&path, &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 0, 0, 0xff)), &DrawOptions::new());
@@ -308,7 +350,13 @@ impl ViewScreen {
     }
 }
 
-fn score_skier_agent(skier_agent: &mut SkierAgent, course: &mut SlalomCourse) -> (SkiScore, Skier) {
+impl Clone for Box<dyn SkierAgent> {
+    fn clone(&self) -> Self {
+        self.duplicate()
+    }
+}
+
+fn score_skier_agent(skier_agent: &mut dyn SkierAgent, course: &mut SlalomCourse) -> (SkiScore, Skier, i32) {
     let mut boat_location: i32 = -6000;
     let end_of_course = (41 * 5 + 27 * 2 + 55) * 100;
     // let mut boat_location: i32 = 22250;
@@ -357,7 +405,10 @@ fn score_skier_agent(skier_agent: &mut SkierAgent, course: &mut SlalomCourse) ->
             }
         }
         for x in 0..6 {
-            if !buoys[x].0 {
+            if course.buoys[x].death_line.intersects(&segment) {
+				break;
+			}
+			if !buoys[x].0 {
                 if course.buoys[x].quarter_mark.intersects(&segment) {
                     buoys[x].0 = true;
                 }
@@ -378,55 +429,63 @@ fn score_skier_agent(skier_agent: &mut SkierAgent, course: &mut SlalomCourse) ->
         }
     }
     if !entry_gates {
-        return (SkiScore::missed_entry(), skier);
+        return (SkiScore::missed_entry(), skier, boat_location);
     }
     for x in 0..5u16 {
         match buoys[x as usize] {
             (true, true, true) => continue,
-            (true, true, false) => return (SkiScore::no_exit(x * 100 + 50), skier),
-            (true, false, _) => return (SkiScore::no_exit(x * 100 + 25), skier),
-            (false, _, _) => return (SkiScore::no_exit(x), skier),
+            (true, true, false) => return (SkiScore::no_exit(x * 100 + 50), skier, boat_location),
+            (true, false, _) => return (SkiScore::no_exit(x * 100 + 25), skier, boat_location),
+            (false, _, _) => return (SkiScore::no_exit(x), skier, boat_location),
         }
     }
     if exit_gates {
-        return (SkiScore::full_pass(), skier);
+        return (SkiScore::full_pass(), skier, boat_location);
     }
     else {
-        return (SkiScore::no_exit(600), skier);
+        return (SkiScore::no_exit(600), skier, boat_location);
     }
 }
 
 
-fn tests() {
-	let gates = CourseLineSeg(CoursePoint { downcourse: 0, sidecourse: 125 }, CoursePoint { downcourse: 0, sidecourse: -125 });
-	let skier = CourseLineSeg(CoursePoint { downcourse: -5, sidecourse: 0 }, CoursePoint { downcourse: 5, sidecourse: 0 });
-	assert!(gates.intersects(&skier));
-}
+// fn tests() {
+// 	let gates = CourseLineSeg(CoursePoint { downcourse: 0, sidecourse: 125 }, CoursePoint { downcourse: 0, sidecourse: -125 });
+// 	let skier = CourseLineSeg(CoursePoint { downcourse: -5, sidecourse: 0 }, CoursePoint { downcourse: 5, sidecourse: 0 });
+// 	assert!(gates.intersects(&skier));
+// }
 
-fn breed(population: &mut Vec<Box<SkierAgent>>, target_size: usize) {
-	let mut new_elems = vec![Box::new(SkierAgent::default())];
+fn breed(population: &mut Vec<Box<dyn SkierAgent>>, target_size: usize) {
+	let mut new_elems: Vec<Box<dyn SkierAgent>>= vec![Box::new(GeneticSkierAgent::default())];
 	for x in population.iter().take(10) {
-		new_elems.push(x.clone());
+		new_elems.push(x.duplicate());
 	}
 	for x in population.iter().take(50) {
-		new_elems.push(x.clone());
+		let mut a = x.duplicate();
+		a.mutate();
+		new_elems.push(a);
 	}
 	let mut r = rand::thread_rng();
 	while new_elems.len() + population.len() < target_size {
 		let lucky_index = r.gen::<usize>() % population.len();
-		new_elems.push(population.get(lucky_index).unwrap().clone());
+		let mut b = population.get(lucky_index).unwrap().duplicate();
+		b.mutate();
+		b.mutate();
+		new_elems.push(b);
 	}
 	for x in new_elems.iter_mut() {
+		x.mutate();
+		x.mutate();
 		x.mutate();
 	}
 	population.append(&mut new_elems);
 }
 
-fn select(current_population: Vec<Box<SkierAgent>>, limit: usize) -> Vec<Box<SkierAgent>> {
+fn select(current_population: Vec<Box<dyn SkierAgent>>, limit: usize) -> Vec<Box<dyn SkierAgent>> {
 	let mut scored = current_population.into_iter().map(|mut ski_agent| {
-		let (score, skier) = score_skier_agent(&mut *ski_agent, &mut SlalomCourse::create());
-		(ski_agent, score, skier)
-	}).collect::<Vec<(Box<SkierAgent>, SkiScore, Skier)>>();
+		let (score, skier, boat_loc) = score_skier_agent(&mut *ski_agent, &mut SlalomCourse::create());
+		(ski_agent, score, skier, boat_loc)
+	}).collect::<Vec<(Box<dyn SkierAgent>, SkiScore, Skier, i32)>>();
+	scored.shuffle(&mut rand::thread_rng());
 	scored.sort_by(|a, b| {
 		match (a.1.entry_gates, b.1.entry_gates) {
 			(true, false) => return Ordering::Greater,
@@ -438,8 +497,9 @@ fn select(current_population: Vec<Box<SkierAgent>>, limit: usize) -> Vec<Box<Ski
 			match (a.1.exit_gates, b.1.exit_gates) {
 				(true, false) => Ordering::Greater,
 				(false, true) => Ordering::Less,
-				(false, false) => Ordering::Equal,
-				(true, true) => Ordering::Equal
+				(false, false) | (true, true) => {
+					a.3.cmp(&b.3)
+				}
 			}
 		}
 		else if a.1.score > b.1.score {
@@ -449,30 +509,79 @@ fn select(current_population: Vec<Box<SkierAgent>>, limit: usize) -> Vec<Box<Ski
 			Ordering::Less
 		}
 	});
+	scored.reverse();
 	scored.into_iter().map(|e|{
 		e.0
 	}).take(limit).collect()
 }
 
-fn select_and_improve(population: &mut Vec<Box<SkierAgent>>) {
-	for _ in 0..5 {
-	    breed(population, 500);
+fn select_and_improve(population: &mut Vec<Box<dyn SkierAgent>>) {
+	for x in 0..5 {
+	    breed(population, 2000);
         let mut temp = Default::default();
         std::mem::swap(&mut temp, population);
-        temp = select(temp, 250);
+        temp = select(temp, 400);
         std::mem::swap(&mut temp, population);
+		println!("{x}");
     }
 }
-
 
 fn main() {
     let mut viewscreen = ViewScreen::create();
     let mut course = SlalomCourse::create();
-	let agent = SkierAgent::default();
-	let mut population = vec![Box::new(agent)];
+	// let agent = GeneticSkierAgent::default();
+	let agent = GeneticSkierAgent::craft(
+		vec![
+			(750, 3, 3),
+			(766, -3, 1),
+			(800, 0, 3),
+			(859, 2, 0),
+			(860, 1, 0),
+			(897, 1, 0),
+			(917, 1, 0),
+			(941, 1, 0),
+			(955, 1, 0),
+			(971, 1, 0),
+			(980, 1, 0),
+			(990, 1, 0),
+			(996, 1, 0),
+			(1000, -1, -3),
+			(1001, -1, -3),
+			(1002, -2, -3),
+			(1019, -3, 1),
+			(1020, -3, 1),
+			(1022, -3, 1),
+			(1029, -3, -3),
+			(1030, -3, -3),
+			(1098, 1, 0),
+			(1099, 2, 0),
+			(1100, 1, -3),
+			(1101, 3, -3),
+			(1110, 1, 0),
+			(1116, -3, 1),
+			(1117, -3, 1),
+			(1118, -3, -3),
+			(1133, -3, -3),
+			(1137, 2, -3),
+			(1140, 3, -3),
+			(1141, 3, -3),
+			(1142, 1, -3),
+			(1147, -3, 1),
+			(1149, -3, 1),
+			(1151, 2, -3),
+			(1157, -3, -3),
+			(1159, 1, -3),
+			(1160, 1, -3),
+			(1161, -3, -3),
+
+		]
+	);
+	let mut population: Vec<Box<dyn SkierAgent>> = vec![Box::new(agent)];
     select_and_improve(&mut population);
-    let (score, skier) = score_skier_agent(population.first_mut().unwrap(), &mut course);
-    println!("score: {score:?}");
+	let agent = population.first_mut().unwrap();
+    let (score, skier, _boat_loc) = score_skier_agent(&mut **agent, &mut course);
+    agent.dump();
+	println!("score: {score:?}");
 	while viewscreen.is_open() {
 		sleep(Duration::from_millis(200));
 		course.draw_buoys(&mut viewscreen);
