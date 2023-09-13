@@ -242,7 +242,7 @@ impl SkierAgent for GeneticSkierAgent {
 }
 
 impl GeneticSkierAgent {
-	const MAX_ACCEL:i8 = 3;
+	const MAX_ACCEL:i8 = 2;
 	fn craft(accelerations: Vec<(usize, i8, i8)>) -> Self {
 		let mut ret = Self::default();
 		for (index, a, b) in accelerations {
@@ -254,7 +254,7 @@ impl GeneticSkierAgent {
 	}
 	fn mutate_index(&mut self, index: usize) {
 		let mut rng = rand::thread_rng();
-		self.moves[index] = (rng.gen::<i8>() % Self::MAX_ACCEL, rng.gen::<i8>() % Self::MAX_ACCEL);
+		self.moves[index] = (rng.gen::<i8>() % (Self::MAX_ACCEL + 1), rng.gen::<i8>() % (Self::MAX_ACCEL + 1));
 	}
 	fn inc_mutate_index(&mut self, index: usize) {
 		if let Some((a,b)) = self.moves.get_mut(index) {
@@ -343,18 +343,18 @@ impl ViewScreen {
     //     let path = pb.finish();
     //     self.dt.fill(&path, &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 0, 0xff, 0)), &DrawOptions::new());
     //
-	fn draw_segment(&mut self, segment: &CourseLineSeg) {
-		let mut pb = PathBuilder::new();
-		let (px, py) = Self::convert_course_point(segment.0);
-		let (qx, qy) = Self::convert_course_point(segment.1);
-		pb.move_to(px, py);
-		pb.line_to(qx, qy);
-		pb.line_to(qx + 1., qy + 1.);
-		pb.line_to(px + 1., py + 1.);
-		pb.line_to(px, py);
-		let path = pb.finish();
-		self.dt.fill(&path, &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 0, 0xff, 0)), &DrawOptions::new());
-	}
+	// fn draw_segment(&mut self, segment: &CourseLineSeg) {
+	// 	let mut pb = PathBuilder::new();
+	// 	let (px, py) = Self::convert_course_point(segment.0);
+	// 	let (qx, qy) = Self::convert_course_point(segment.1);
+	// 	pb.move_to(px, py);
+	// 	pb.line_to(qx, qy);
+	// 	pb.line_to(qx + 1., qy + 1.);
+	// 	pb.line_to(px + 1., py + 1.);
+	// 	pb.line_to(px, py);
+	// 	let path = pb.finish();
+	// 	self.dt.fill(&path, &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 0, 0xff, 0)), &DrawOptions::new());
+	// }
 	fn draw_skier(&mut self, skier_location: &SkierPath) {
 		for x in skier_location.points.iter() {
 			let mut pb = PathBuilder::new();
@@ -499,12 +499,8 @@ fn breed(population: &mut Vec<Box<dyn SkierAgent>>, target_size: usize) {
 		let mut b = population.get(lucky_index).unwrap().duplicate();
 		b.mutate();
 		b.mutate();
+		b.mutate();
 		new_elems.push(b);
-	}
-	for x in new_elems.iter_mut() {
-		x.mutate();
-		x.mutate();
-		x.mutate();
 	}
 	population.append(&mut new_elems);
 }
@@ -550,6 +546,7 @@ fn select(current_population: Vec<Box<dyn SkierAgent>>, limit: usize) -> Vec<Box
 	// scored.iter().for_each(|e|{
 	// 	println!("Found: {:?}", e.1);
 	// });
+    println!("Top score: {:?}, Bottom score: {:?}", scored.first().unwrap().1, scored.last().unwrap().1);
 	scored.into_iter().take(limit).map(|e| {
 		// println!("Keeping: {:?}", e.1);
 		e.0
@@ -557,7 +554,7 @@ fn select(current_population: Vec<Box<dyn SkierAgent>>, limit: usize) -> Vec<Box
 }
 
 fn select_and_improve(population: &mut Vec<Box<dyn SkierAgent>>) {
-	for x in 0..50 {
+	for x in 0..1000 {
 	    breed(population, 4000);
         let mut temp = Default::default();
         std::mem::swap(&mut temp, population);
@@ -579,7 +576,9 @@ fn main() {
 		// agent.dump();
 		println!("score: {score:?}");
 		let mut viewscreen = ViewScreen::create();
-		while viewscreen.is_open() {
+        let mut iterations = 0;
+		while viewscreen.is_open() && iterations < 100 {
+            iterations += 1;
 			sleep(Duration::from_millis(200));
 			course.draw_buoys(&mut viewscreen);
 			viewscreen.draw_skier(&skier.ski_path);
