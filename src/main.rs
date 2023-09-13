@@ -500,6 +500,8 @@ fn breed(population: &mut Vec<Box<dyn SkierAgent>>, target_size: usize) {
 		b.mutate();
 		b.mutate();
 		b.mutate();
+		b.mutate();
+		b.mutate();
 		new_elems.push(b);
 	}
 	population.append(&mut new_elems);
